@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "Destination": {
+      "title": "Destination",
+      "description": "A travel package destination offered by Zayan Travels.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the destination" },
+        "country": { "type": "string", "description": "Country of the destination" },
+        "description": { "type": "string", "description": "Detailed description" },
+        "price": { "type": "number", "description": "Price in USD" },
+        "duration": { "type": "string", "description": "Duration of the trip (e.g., '7 Days')" },
+        "image": { "type": "string", "format": "uri", "description": "URL to the destination image" },
+        "category": { "type": "string", "enum": ["Adventure", "Relaxation", "Culture", "Luxury"], "description": "Category of the trip" },
+        "featured": { "type": "boolean", "description": "Whether to show on the homepage" }
+      },
+      "required": ["name", "country", "price", "image", "category"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "A travel booking made by a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user who made the booking" },
+        "destinationId": { "type": "string", "description": "ID of the destination booked" },
+        "destinationName": { "type": "string", "description": "Name of the destination at time of booking" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "cancelled"], "description": "Current status of the booking" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the booking was created" },
+        "travelDate": { "type": "string", "format": "date", "description": "Planned travel date" },
+        "totalPrice": { "type": "number", "description": "Total price paid" }
+      },
+      "required": ["userId", "destinationId", "status", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string", "description": "User's full name" },
+        "email": { "type": "string", "format": "email", "description": "User's email address" },
+        "photoURL": { "type": "string", "format": "uri", "description": "User's profile picture URL" },
+        "role": { "type": "string", "enum": ["user", "admin"], "description": "User's role in the system" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/destinations/{destinationId}": {
+      "schema": "Destination",
+      "description": "Collection of available travel destinations"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Collection of user travel bookings"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles"
+    }
+  }
+}
