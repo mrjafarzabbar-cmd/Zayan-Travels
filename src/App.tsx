@@ -20,9 +20,17 @@ import {
   LogOut,
   CheckCircle2,
   AlertCircle,
-  Trash2
+  Trash2,
+  Heart,
+  Cloud,
+  Sun,
+  CloudRain,
+  CloudLightning,
+  Coins,
+  BookOpen,
+  ChevronDown
 } from 'lucide-react';
-import { DESTINATIONS as STATIC_DESTINATIONS, Destination } from './constants';
+import { DESTINATIONS as STATIC_DESTINATIONS, Destination, ItineraryItem } from './constants';
 import { getTravelAdvice } from './services/gemini';
 import { cn } from './lib/utils';
 import ReactMarkdown from 'react-markdown';
@@ -44,7 +52,9 @@ import {
   doc,
   setDoc,
   getDoc,
-  deleteDoc
+  deleteDoc,
+  query,
+  where
 } from 'firebase/firestore';
 
 // Error Handling Types
@@ -159,8 +169,82 @@ function MainApp() {
   const [allBookings, setAllBookings] = useState<any[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [userBookings, setUserBookings] = useState<any[]>([]);
   const [adminStatusFilter, setAdminStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  
+  // New Features State
+  const [wishlist, setWishlist] = useState<string[]>([]);
+  const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null);
+  const [showItinerary, setShowItinerary] = useState(false);
+  const [showReviews, setShowReviews] = useState(false);
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [blogPosts, setBlogPosts] = useState<any[]>([]);
+  const [currency, setCurrency] = useState<'USD' | 'EUR' | 'GBP' | 'JPY' | 'INR'>('USD');
+  const [exchangeRates] = useState({
+    USD: 1,
+    EUR: 0.92,
+    GBP: 0.79,
+    JPY: 151.34,
+    INR: 83.34
+  });
+  const [weatherData, setWeatherData] = useState<Record<string, any>>({});
+  const [showBlog, setShowBlog] = useState(false);
+  const [showWishlist, setShowWishlist] = useState(false);
+
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const formatPrice = (price: number) => {
+    const rate = exchangeRates[currency];
+    const converted = price * rate;
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency,
+    }).format(converted);
+  };
+
+  // Fetch Wishlist
+  useEffect(() => {
+    if (!user) {
+      setWishlist([]);
+      return;
+    }
+    const q = collection(db, 'wishlists');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const userWishlist = snapshot.docs
+        .filter(doc => doc.data().userId === user.uid)
+        .map(doc => doc.data().destinationId);
+      setWishlist(userWishlist);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'wishlists'));
+    return () => unsubscribe();
+  }, [user]);
+
+  // Fetch Blog Posts
+  useEffect(() => {
+    const q = collection(db, 'blog');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const posts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setBlogPosts(posts);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'blog'));
+    return () => unsubscribe();
+  }, []);
+
+  // Mock Weather Fetch
+  useEffect(() => {
+    const fetchWeather = () => {
+      const mockWeather: Record<string, any> = {};
+      destinations.forEach(dest => {
+        const conditions = ['Sunny', 'Cloudy', 'Rainy', 'Stormy'];
+        const condition = conditions[Math.floor(Math.random() * conditions.length)];
+        mockWeather[dest.id] = {
+          temp: Math.floor(Math.random() * 15) + 15, // 15-30C
+          condition
+        };
+      });
+      setWeatherData(mockWeather);
+    };
+    if (destinations.length > 0) fetchWeather();
+  }, [destinations]);
 
   // Auth Listener
   useEffect(() => {
@@ -215,6 +299,20 @@ function MainApp() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Fetch User Bookings
+  useEffect(() => {
+    if (!user) {
+      setUserBookings([]);
+      return;
+    }
+    const q = query(collection(db, 'bookings'), where('userEmail', '==', user.email));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const bookings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUserBookings(bookings);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'bookings'));
+    return () => unsubscribe();
+  }, [user]);
 
   // Fetch All Bookings for Admin
   useEffect(() => {
@@ -325,6 +423,48 @@ function MainApp() {
     }
   };
 
+  const toggleWishlist = async (destId: string) => {
+    if (!user) {
+      setBookingStatus({ type: 'error', message: 'Please login to save destinations' });
+      return;
+    }
+    const isWishlisted = wishlist.includes(destId);
+    if (isWishlisted) {
+      const q = collection(db, 'wishlists');
+      const unsubscribe = onSnapshot(q, async (snapshot) => {
+        const wishDoc = snapshot.docs.find(doc => doc.data().userId === user.uid && doc.data().destinationId === destId);
+        if (wishDoc) {
+          try {
+            await deleteDoc(doc(db, 'wishlists', wishDoc.id));
+          } catch (error) {
+            handleFirestoreError(error, OperationType.DELETE, 'wishlists');
+          }
+        }
+        unsubscribe();
+      });
+    } else {
+      try {
+        await addDoc(collection(db, 'wishlists'), {
+          userId: user.uid,
+          destinationId: destId,
+          createdAt: serverTimestamp()
+        });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, 'wishlists');
+      }
+    }
+  };
+
+  const WeatherIcon = ({ condition }: { condition: string }) => {
+    switch (condition) {
+      case 'Sunny': return <Sun className="w-4 h-4 text-yellow-500" />;
+      case 'Cloudy': return <Cloud className="w-4 h-4 text-gray-400" />;
+      case 'Rainy': return <CloudRain className="w-4 h-4 text-blue-400" />;
+      case 'Stormy': return <CloudLightning className="w-4 h-4 text-purple-400" />;
+      default: return <Sun className="w-4 h-4 text-yellow-500" />;
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Booking Status Toast */}
@@ -361,40 +501,82 @@ function MainApp() {
         "fixed top-0 left-0 right-0 z-50 transition-all duration-300 px-6 py-4 flex items-center justify-between",
         scrolled ? "bg-white/80 backdrop-blur-md shadow-sm py-3" : "bg-transparent"
       )}>
-        <div className="flex items-center gap-2">
-          <div className="w-10 h-10 bg-accent rounded-full flex items-center justify-center text-white font-serif text-xl font-bold">Z</div>
-          <span className={cn("text-2xl font-serif font-bold tracking-tight", scrolled ? "text-ink" : "text-white")}>
+        <div className="flex items-center gap-2 group cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+          <div className="w-10 h-10 bg-accent rounded-full flex items-center justify-center text-white font-serif text-xl font-bold transition-transform group-hover:rotate-12">Z</div>
+          <span className={cn("text-2xl font-serif font-bold tracking-tight transition-colors", scrolled ? "text-ink" : "text-white")}>
             Zayan <span className="font-light italic">Travels</span>
           </span>
         </div>
 
-        <div className="hidden md:flex items-center gap-8">
-          {['Destinations', 'Packages', 'About', 'Contact'].map((item) => (
+        <div className="hidden md:flex items-center gap-10">
+          {['Destinations', 'About', 'Contact'].map((item) => (
             <a 
               key={item} 
-              href={`#${item.toLowerCase()}`} 
+              href={`#${item.toLowerCase()}`}
               className={cn(
-                "text-sm uppercase tracking-widest font-medium hover:text-accent transition-colors",
-                scrolled ? "text-ink/70" : "text-white/80"
+                "text-xs uppercase tracking-[0.2em] font-bold hover:text-accent transition-colors",
+                scrolled ? "text-ink/60" : "text-white/80"
               )}
             >
               {item}
             </a>
           ))}
           
+          {/* Currency Selector */}
+          <div className="relative group">
+            <button className={cn(
+              "flex items-center gap-2 text-xs font-bold uppercase tracking-widest",
+              scrolled ? "text-ink/60" : "text-white/80"
+            )}>
+              <Coins className="w-4 h-4" />
+              {currency}
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            <div className="absolute top-full right-0 mt-2 w-32 bg-white rounded-2xl shadow-xl border border-ink/5 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-2">
+              {['USD', 'EUR', 'GBP', 'JPY', 'INR'].map(c => (
+                <button 
+                  key={c}
+                  onClick={() => setCurrency(c as any)}
+                  className={cn(
+                    "w-full text-left px-4 py-2 rounded-xl text-xs font-bold transition-colors hover:bg-paper",
+                    currency === c ? "text-accent" : "text-ink/60"
+                  )}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button 
+            onClick={() => setShowBlog(true)}
+            className={cn(
+              "flex items-center gap-2 text-xs font-bold uppercase tracking-widest",
+              scrolled ? "text-ink/60" : "text-white/80"
+            )}
+          >
+            <BookOpen className="w-4 h-4" />
+            Blog
+          </button>
+        </div>
+
+        <div className="hidden md:flex items-center gap-6">
           {isAuthReady && (
             user ? (
               <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 bg-white/10 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/20">
+                <button 
+                  onClick={() => setShowDashboard(true)}
+                  className="flex items-center gap-2 bg-white/10 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/20 hover:bg-white/20 transition-all"
+                >
                   {user.photoURL ? (
                     <img src={user.photoURL} alt={user.displayName || ''} className="w-6 h-6 rounded-full" />
                   ) : (
                     <UserIcon className="w-4 h-4 text-white" />
                   )}
                   <span className={cn("text-xs font-medium", scrolled ? "text-ink" : "text-white")}>
-                    {user.displayName?.split(' ')[0]}
+                    Dashboard
                   </span>
-                </div>
+                </button>
                 {isAdmin && (
                   <button 
                     onClick={() => setShowAdminPanel(true)}
@@ -567,34 +749,78 @@ function MainApp() {
             <motion.div 
               key={dest.id}
               whileHover={{ y: -10 }}
-              className="group cursor-pointer"
+              className="group bg-white rounded-[2rem] overflow-hidden shadow-sm border border-ink/5 hover:shadow-2xl hover:shadow-accent/10 transition-all duration-500"
             >
-              <div className="relative aspect-[4/5] overflow-hidden rounded-2xl mb-6">
+              <div className="relative aspect-[4/5] overflow-hidden">
                 <img 
                   src={dest.image} 
                   alt={dest.name} 
                   className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                   referrerPolicy="no-referrer"
                 />
-                <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm px-3 py-1 rounded-full text-[10px] uppercase tracking-widest font-bold">
-                  {dest.category}
-                </div>
-                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                
+                {/* Wishlist Button */}
+                <button 
+                  onClick={(e) => { e.stopPropagation(); toggleWishlist(dest.id); }}
+                  className="absolute top-6 right-6 w-10 h-10 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-accent transition-all z-20"
+                >
+                  <Heart className={cn("w-5 h-5", wishlist.includes(dest.id) ? "fill-white" : "")} />
+                </button>
+
+                {/* Weather Widget */}
+                {weatherData[dest.id] && (
+                  <div className="absolute top-6 left-6 px-3 py-1.5 bg-white/20 backdrop-blur-md rounded-full flex items-center gap-2 text-white text-[10px] font-bold uppercase tracking-widest z-20">
+                    <WeatherIcon condition={weatherData[dest.id].condition} />
+                    {weatherData[dest.id].temp}°C • {weatherData[dest.id].condition}
+                  </div>
+                )}
+
+                <div className="absolute bottom-8 left-8 right-8 translate-y-4 group-hover:translate-y-0 transition-transform duration-500 z-20">
+                  <div className="flex items-center gap-2 text-white/80 text-xs font-bold uppercase tracking-widest mb-2">
+                    <MapPin className="w-3 h-3 text-accent" />
+                    {dest.country}
+                  </div>
+                  <h4 className="text-2xl font-serif text-white mb-4">{dest.name}</h4>
                   <button 
-                    onClick={(e) => { e.stopPropagation(); handleBooking(dest); }}
-                    className="w-full bg-white text-ink py-3 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-accent hover:text-white transition-colors"
+                    onClick={() => { setSelectedDestination(dest); setShowItinerary(true); }}
+                    className="w-full py-3 bg-white text-ink rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-accent hover:text-white transition-all"
                   >
-                    Book Trip <ChevronRight className="w-4 h-4" />
+                    View Itinerary
                   </button>
                 </div>
               </div>
-              <div className="flex justify-between items-start mb-2">
-                <h4 className="text-2xl font-serif">{dest.name}</h4>
-                <div className="text-accent font-medium">${dest.price}</div>
-              </div>
-              <div className="flex items-center gap-4 text-ink/50 text-sm">
-                <div className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {dest.country}</div>
-                <div className="flex items-center gap-1"><Clock className="w-3 h-3" /> {dest.duration}</div>
+              
+              <div className="p-8">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-1">
+                    <Star className="w-4 h-4 fill-accent text-accent" />
+                    <span className="text-sm font-bold">{dest.rating || '4.8'}</span>
+                    <span className="text-xs text-ink/40">({dest.reviewCount || '0'})</span>
+                  </div>
+                  <div className="text-xs uppercase tracking-widest font-bold text-accent bg-accent/5 px-3 py-1 rounded-full">
+                    {dest.category}
+                  </div>
+                </div>
+                <p className="text-ink/60 text-sm leading-relaxed mb-8 line-clamp-2">
+                  {dest.description}
+                </p>
+                <div className="flex items-center justify-between pt-6 border-t border-ink/5">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-ink/40 font-bold mb-1">Starting from</div>
+                    <div className="text-2xl font-serif text-accent">{formatPrice(dest.price)}</div>
+                  </div>
+                  <div className="flex items-center gap-2 text-ink/40 text-xs font-bold">
+                    <Clock className="w-4 h-4" />
+                    {dest.duration}
+                  </div>
+                </div>
+                <button 
+                  onClick={() => handleBooking(dest)}
+                  className="w-full mt-8 py-4 bg-ink text-white rounded-2xl text-xs font-bold uppercase tracking-widest hover:bg-accent transition-all shadow-lg shadow-ink/10"
+                >
+                  Book Experience
+                </button>
               </div>
             </motion.div>
           ))}
@@ -902,6 +1128,259 @@ function MainApp() {
                 </div>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* User Dashboard Modal */}
+      <AnimatePresence>
+        {showDashboard && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-5xl h-[85vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="bg-accent p-6 flex items-center justify-between text-white">
+                <div className="flex items-center gap-3">
+                  <UserIcon className="w-6 h-6" />
+                  <h4 className="font-serif text-2xl">My Travel Dashboard</h4>
+                </div>
+                <button onClick={() => setShowDashboard(false)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Left Column: Bookings */}
+                  <div className="lg:col-span-2 space-y-8">
+                    <div>
+                      <h5 className="text-xl font-serif mb-6 flex items-center gap-2">
+                        <Calendar className="w-5 h-5 text-accent" />
+                        My Bookings
+                      </h5>
+                      <div className="space-y-4">
+                        {userBookings.length === 0 ? (
+                          <div className="bg-paper p-12 rounded-2xl border border-ink/5 text-center">
+                            <p className="text-ink/40 italic">You haven't made any bookings yet.</p>
+                            <button 
+                              onClick={() => {
+                                setShowDashboard(false);
+                                window.scrollTo({ top: document.getElementById('destinations')?.offsetTop || 0, behavior: 'smooth' });
+                              }}
+                              className="mt-4 text-accent font-bold text-sm hover:underline"
+                            >
+                              Explore Destinations
+                            </button>
+                          </div>
+                        ) : (
+                          userBookings.map((booking) => (
+                            <div key={booking.id} className="bg-paper p-6 rounded-2xl border border-ink/5 flex items-center justify-between gap-6">
+                              <div>
+                                <div className="flex items-center gap-3 mb-2">
+                                  <span className={cn(
+                                    "text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 rounded-full",
+                                    booking.status === 'approved' ? "bg-green-100 text-green-700" :
+                                    booking.status === 'rejected' ? "bg-red-100 text-red-700" :
+                                    "bg-yellow-100 text-yellow-700"
+                                  )}>
+                                    {booking.status}
+                                  </span>
+                                  <span className="text-xs text-ink/40 font-mono">ID: {booking.id.slice(0, 8)}</span>
+                                </div>
+                                <h6 className="text-lg font-serif mb-1">{booking.destinationName}</h6>
+                                <div className="flex gap-4 text-sm text-ink/60">
+                                  <div className="flex items-center gap-1"><Star className="w-3 h-3" /> {formatPrice(booking.totalPrice)}</div>
+                                  <div className="flex items-center gap-1"><Clock className="w-3 h-3" /> {booking.createdAt?.toDate().toLocaleDateString()}</div>
+                                </div>
+                              </div>
+                              {booking.status === 'pending' && (
+                                <button 
+                                  onClick={() => deleteBooking(booking.id)}
+                                  className="p-2 text-red-400 hover:text-red-600 transition-colors"
+                                  title="Cancel Booking"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Wishlist */}
+                  <div className="space-y-8">
+                    <div>
+                      <h5 className="text-xl font-serif mb-6 flex items-center gap-2">
+                        <Heart className="w-5 h-5 text-red-500 fill-red-500" />
+                        My Wishlist
+                      </h5>
+                      <div className="space-y-4">
+                        {wishlist.length === 0 ? (
+                          <div className="bg-paper p-8 rounded-2xl border border-ink/5 text-center">
+                            <p className="text-ink/40 text-sm italic">Your wishlist is empty.</p>
+                          </div>
+                        ) : (
+                          wishlist.map((destId) => {
+                            const dest = destinations.find(d => d.id === destId);
+                            if (!dest) return null;
+                            return (
+                              <div key={destId} className="bg-white p-4 rounded-2xl border border-ink/5 flex items-center gap-4 group">
+                                <img src={dest.image} alt={dest.name} className="w-16 h-16 rounded-xl object-cover shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <h6 className="font-serif text-sm truncate">{dest.name}</h6>
+                                  <p className="text-accent font-bold text-xs">{formatPrice(dest.price)}</p>
+                                </div>
+                                <button 
+                                  onClick={() => toggleWishlist(destId)}
+                                  className="p-2 text-red-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Itinerary Modal */}
+      <AnimatePresence>
+        {showItinerary && selectedDestination && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-3xl h-[80vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="relative h-64 shrink-0">
+                <img src={selectedDestination.image} alt={selectedDestination.name} className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-8">
+                  <h4 className="text-white text-4xl font-serif mb-2">{selectedDestination.name}</h4>
+                  <div className="flex items-center gap-4 text-white/80 text-sm">
+                    <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {selectedDestination.country}</span>
+                    <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {selectedDestination.duration}</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowItinerary(false)}
+                  className="absolute top-6 right-6 bg-white/20 backdrop-blur-md text-white p-2 rounded-full hover:bg-white/40 transition-all"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8">
+                <h5 className="text-2xl font-serif mb-8">Day-by-Day Plan</h5>
+                <div className="space-y-12 relative before:absolute before:left-4 before:top-2 before:bottom-2 before:w-0.5 before:bg-accent/10">
+                  {selectedDestination.itinerary?.map((item, i) => (
+                    <div key={i} className="relative pl-12">
+                      <div className="absolute left-0 top-0 w-8 h-8 bg-accent text-white rounded-full flex items-center justify-center font-bold text-sm z-10">
+                        {item.day}
+                      </div>
+                      <h6 className="text-xl font-serif mb-3">{item.title}</h6>
+                      <p className="text-ink/60 leading-relaxed text-sm mb-4">{item.activities}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-8 border-t border-ink/5 bg-paper flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-widest text-ink/40 font-bold mb-1">Total Package Price</div>
+                  <div className="text-3xl font-serif text-accent">{formatPrice(selectedDestination.price)}</div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setShowItinerary(false);
+                    handleBooking(selectedDestination);
+                  }}
+                  className="bg-accent text-white px-10 py-4 rounded-2xl font-bold hover:scale-105 transition-all shadow-lg shadow-accent/20"
+                >
+                  Book This Trip
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Blog Section Overlay */}
+      <AnimatePresence>
+        {showBlog && (
+          <motion.div 
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="fixed inset-0 z-[150] bg-white overflow-y-auto"
+          >
+            <div className="max-w-5xl mx-auto px-6 py-24">
+              <button 
+                onClick={() => setShowBlog(false)}
+                className="fixed top-8 right-8 bg-paper p-4 rounded-full hover:bg-accent hover:text-white transition-all shadow-xl z-[160]"
+              >
+                <X className="w-8 h-8" />
+              </button>
+
+              <div className="text-center mb-20">
+                <h2 className="text-sm uppercase tracking-[0.3em] text-accent font-bold mb-6">Travel Journal</h2>
+                <h3 className="text-6xl font-serif mb-8">Stories from the Road</h3>
+                <p className="text-ink/50 max-w-2xl mx-auto leading-relaxed">
+                  Discover hidden gems, travel tips, and inspiring stories from our global community of explorers.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                {blogPosts.length === 0 ? (
+                  <div className="col-span-2 text-center py-20 text-ink/30 italic">No blog posts found. Check back soon!</div>
+                ) : (
+                  blogPosts.map((post) => (
+                    <article key={post.id} className="group cursor-pointer">
+                      <div className="relative aspect-[16/10] overflow-hidden rounded-3xl mb-8">
+                        <img 
+                          src={post.image} 
+                          alt={post.title} 
+                          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
+                        />
+                        <div className="absolute top-6 left-6 bg-white/90 backdrop-blur-sm px-4 py-1.5 rounded-full text-[10px] uppercase tracking-widest font-bold text-accent">
+                          {post.category}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 mb-4 text-xs uppercase tracking-widest text-ink/40 font-bold">
+                        <span>{post.author}</span>
+                        <span className="w-1 h-1 bg-accent rounded-full"></span>
+                        <span>{post.createdAt?.toDate().toLocaleDateString()}</span>
+                      </div>
+                      <h4 className="text-3xl font-serif mb-4 group-hover:text-accent transition-colors">{post.title}</h4>
+                      <p className="text-ink/60 leading-relaxed line-clamp-3 text-sm">{post.content}</p>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

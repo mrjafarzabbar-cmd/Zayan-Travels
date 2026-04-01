@@ -11,10 +11,64 @@
         "price": { "type": "number", "description": "Price in USD" },
         "duration": { "type": "string", "description": "Duration of the trip (e.g., '7 Days')" },
         "image": { "type": "string", "format": "uri", "description": "URL to the destination image" },
-        "category": { "type": "string", "enum": ["Adventure", "Relaxation", "Culture", "Luxury"], "description": "Category of the trip" },
-        "featured": { "type": "boolean", "description": "Whether to show on the homepage" }
+        "category": { "type": "string", "enum": ["Adventure", "Relaxation", "Culture", "Luxury", "Family", "Transport"], "description": "Category of the trip" },
+        "featured": { "type": "boolean", "description": "Whether to show on the homepage" },
+        "itinerary": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "day": { "type": "integer" },
+              "title": { "type": "string" },
+              "activities": { "type": "string" }
+            }
+          },
+          "description": "Day-by-day itinerary"
+        },
+        "rating": { "type": "number", "description": "Average rating" },
+        "reviewCount": { "type": "integer", "description": "Total number of reviews" }
       },
       "required": ["name", "country", "price", "image", "category"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A user review for a destination.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhoto": { "type": "string" },
+        "destinationId": { "type": "string" },
+        "rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "destinationId", "rating", "comment", "createdAt"]
+    },
+    "Wishlist": {
+      "title": "Wishlist",
+      "description": "A user's saved destination.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "destinationId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "destinationId", "createdAt"]
+    },
+    "BlogPost": {
+      "title": "BlogPost",
+      "description": "A travel blog article.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "author": { "type": "string" },
+        "image": { "type": "string", "format": "uri" },
+        "category": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "author", "image", "createdAt"]
     },
     "Booking": {
       "title": "Booking",
@@ -52,6 +106,18 @@
     "/bookings/{bookingId}": {
       "schema": "Booking",
       "description": "Collection of user travel bookings"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Collection of user reviews"
+    },
+    "/wishlists/{wishlistId}": {
+      "schema": "Wishlist",
+      "description": "Collection of user wishlists"
+    },
+    "/blog/{postId}": {
+      "schema": "BlogPost",
+      "description": "Collection of travel blog posts"
     },
     "/users/{userId}": {
       "schema": "User",

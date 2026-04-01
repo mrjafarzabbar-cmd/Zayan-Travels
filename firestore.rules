@@ -36,6 +36,33 @@ service cloud.firestore {
     //
     // ===============================================================
 
+    // Collection: blog
+    // Fields:
+    //   - title: string (required)
+    //   - content: string (required)
+    //   - author: string (required)
+    //   - image: string (required, URL)
+    //   - category: string
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: reviews
+    // Fields:
+    //   - userId: string (required, immutable)
+    //   - userName: string
+    //   - userPhoto: string
+    //   - destinationId: string (required, immutable)
+    //   - rating: int (1-5)
+    //   - comment: string
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // Collection: wishlists
+    // Fields:
+    //   - userId: string (required, immutable)
+    //   - destinationId: string (required, immutable)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // ===============================================================
+
     // ===============================================================
     // Helper Functions
     // ===============================================================
@@ -72,7 +99,9 @@ service cloud.firestore {
              data.country is string && data.country.size() > 0 && data.country.size() < 100 &&
              data.price is number && data.price >= 0 &&
              isValidUrl(data.image) &&
-             data.category in ['Adventure', 'Relaxation', 'Culture', 'Luxury', 'Family', 'Transport'];
+             data.category in ['Adventure', 'Relaxation', 'Culture', 'Luxury', 'Family', 'Transport'] &&
+             (!('rating' in data) || (data.rating is number && data.rating >= 0 && data.rating <= 5)) &&
+             (!('reviewCount' in data) || (data.reviewCount is int && data.reviewCount >= 0));
     }
 
     function isValidBooking(data) {
@@ -86,6 +115,28 @@ service cloud.firestore {
       return data.keys().hasAll(['email', 'role']) &&
              isValidEmail(data.email) &&
              data.role in ['user', 'admin'];
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['userId', 'destinationId', 'rating', 'comment', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.rating is int && data.rating >= 1 && data.rating <= 5 &&
+             data.comment is string && data.comment.size() > 0 && data.comment.size() < 1000 &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidWishlist(data) {
+      return data.keys().hasAll(['userId', 'destinationId', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidBlogPost(data) {
+      return data.keys().hasAll(['title', 'content', 'author', 'image', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 &&
+             data.content is string && data.content.size() > 0 &&
+             isValidUrl(data.image) &&
+             data.createdAt is timestamp;
     }
 
     // ===============================================================
@@ -115,6 +166,27 @@ service cloud.firestore {
                     (isOwner(userId) || isAdmin()) &&
                     isValidUser(request.resource.data) &&
                     (isAdmin() || request.resource.data.role == resource.data.role);
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidReview(request.resource.data);
+      allow update: if isAuthenticated() && isOwner(resource.data.userId) && isValidReview(request.resource.data) &&
+                    request.resource.data.userId == resource.data.userId &&
+                    request.resource.data.destinationId == resource.data.destinationId &&
+                    request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+    }
+
+    match /wishlists/{wishlistId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isAuthenticated() && isValidWishlist(request.resource.data);
+      allow delete: if isAuthenticated() && isOwner(resource.data.userId);
+    }
+
+    match /blog/{postId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidBlogPost(request.resource.data);
     }
   }
 }
