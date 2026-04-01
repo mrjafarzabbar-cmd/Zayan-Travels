@@ -19,7 +19,8 @@ import {
   User as UserIcon,
   LogOut,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from 'lucide-react';
 import { DESTINATIONS as STATIC_DESTINATIONS, Destination } from './constants';
 import { getTravelAdvice } from './services/gemini';
@@ -42,7 +43,8 @@ import {
   serverTimestamp,
   doc,
   setDoc,
-  getDoc
+  getDoc,
+  deleteDoc
 } from 'firebase/firestore';
 
 // Error Handling Types
@@ -146,6 +148,7 @@ function MainApp() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
@@ -153,6 +156,10 @@ function MainApp() {
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', content: string }[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [bookingStatus, setBookingStatus] = useState<{ type: 'success' | 'error' | 'loading', message: string } | null>(null);
+  const [allBookings, setAllBookings] = useState<any[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminStatusFilter, setAdminStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Auth Listener
@@ -166,17 +173,27 @@ function MainApp() {
         const userRef = doc(db, 'users', firebaseUser.uid);
         try {
           const userSnap = await getDoc(userRef);
-          if (!userSnap.exists()) {
+          let role = 'user';
+          if (userSnap.exists()) {
+            role = userSnap.data().role;
+          } else {
+            // Default admin check
+            if (firebaseUser.email === 'mrjafarzabbar@gmail.com') {
+              role = 'admin';
+            }
             await setDoc(userRef, {
               displayName: firebaseUser.displayName,
               email: firebaseUser.email,
               photoURL: firebaseUser.photoURL,
-              role: 'user'
+              role: role
             });
           }
+          setIsAdmin(role === 'admin');
         } catch (error) {
           console.error("Error syncing user profile:", error);
         }
+      } else {
+        setIsAdmin(false);
       }
     });
     return () => unsubscribe();
@@ -198,6 +215,20 @@ function MainApp() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Fetch All Bookings for Admin
+  useEffect(() => {
+    if (!isAdmin) return;
+    
+    const path = 'bookings';
+    const unsubscribe = onSnapshot(collection(db, path), (snapshot) => {
+      const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllBookings(fetched.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    });
+    return () => unsubscribe();
+  }, [isAdmin]);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 50);
@@ -240,6 +271,8 @@ function MainApp() {
     try {
       await addDoc(collection(db, path), {
         userId: user.uid,
+        userEmail: user.email,
+        userName: user.displayName,
         destinationId: dest.id,
         destinationName: dest.name,
         status: 'pending',
@@ -251,6 +284,24 @@ function MainApp() {
     } catch (error) {
       setBookingStatus({ type: 'error', message: 'Failed to book trip. Please try again.' });
       handleFirestoreError(error, OperationType.CREATE, path);
+    }
+  };
+
+  const updateBookingStatus = async (bookingId: string, newStatus: 'approved' | 'rejected' | 'pending') => {
+    const path = `bookings/${bookingId}`;
+    try {
+      await setDoc(doc(db, 'bookings', bookingId), { status: newStatus }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  };
+
+  const deleteBooking = async (bookingId: string) => {
+    const path = `bookings/${bookingId}`;
+    try {
+      await deleteDoc(doc(db, 'bookings', bookingId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
     }
   };
 
@@ -344,6 +395,15 @@ function MainApp() {
                     {user.displayName?.split(' ')[0]}
                   </span>
                 </div>
+                {isAdmin && (
+                  <button 
+                    onClick={() => setShowAdminPanel(true)}
+                    className={cn("text-xs uppercase tracking-widest font-bold px-3 py-1 rounded-full border transition-all", 
+                      scrolled ? "border-accent text-accent hover:bg-accent hover:text-white" : "border-white text-white hover:bg-white hover:text-ink")}
+                  >
+                    Admin
+                  </button>
+                )}
                 <button 
                   onClick={handleLogout}
                   className={cn("hover:text-accent transition-colors", scrolled ? "text-ink" : "text-white")}
@@ -462,10 +522,10 @@ function MainApp() {
       <section className="py-20 bg-paper border-b border-ink/5">
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12">
           {[
-            { label: 'Destinations', value: '50+' },
-            { label: 'Happy Travelers', value: '12k+' },
-            { label: 'Expert Guides', value: '150+' },
-            { label: 'Years Experience', value: '15+' },
+            { label: 'Destinations', value: '100+' },
+            { label: 'Happy Travelers', value: '25k+' },
+            { label: 'Expert Guides', value: '200+' },
+            { label: 'Years Experience', value: '20+' },
           ].map((stat, i) => (
             <div key={i} className="text-center">
               <div className="text-4xl font-serif text-accent mb-2">{stat.value}</div>
@@ -482,13 +542,28 @@ function MainApp() {
             <h2 className="text-sm uppercase tracking-[0.2em] text-accent font-semibold mb-4">Curated Experiences</h2>
             <h3 className="text-5xl font-serif">Featured Destinations</h3>
           </div>
-          <p className="max-w-md text-ink/60 leading-relaxed">
-            Handpicked locations that offer unique cultural immersion, breathtaking landscapes, and unforgettable memories.
-          </p>
+          <div className="flex flex-wrap gap-2">
+            {['All', 'Adventure', 'Relaxation', 'Culture', 'Luxury', 'Family', 'Transport'].map(cat => (
+              <button 
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={cn(
+                  "px-4 py-2 rounded-full text-xs uppercase tracking-widest font-bold transition-all",
+                  selectedCategory === cat 
+                    ? "bg-accent text-white" 
+                    : "bg-paper text-ink/40 hover:bg-ink/5"
+                )}
+              >
+                {cat === 'Transport' ? 'Cars' : cat}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {destinations.map((dest) => (
+          {destinations
+            .filter(dest => selectedCategory === 'All' || dest.category === selectedCategory)
+            .map((dest) => (
             <motion.div 
               key={dest.id}
               whileHover={{ y: -10 }}
@@ -597,6 +672,50 @@ function MainApp() {
         </div>
       </section>
 
+      {/* Travel Gallery */}
+      <section className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6">
+            <div>
+              <h2 className="text-sm uppercase tracking-[0.2em] text-accent font-semibold mb-4">Visual Journey</h2>
+              <h3 className="text-5xl font-serif">Capture the Moment</h3>
+            </div>
+            <p className="max-w-md text-ink/60 leading-relaxed">
+              A glimpse into the extraordinary landscapes and vibrant cultures our travelers experience every day.
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&q=80&w=800',
+              'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&q=80&w=800',
+              'https://images.unsplash.com/photo-1519046904884-53103b34b206?auto=format&fit=crop&q=80&w=800',
+              'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&q=80&w=800',
+              'https://images.unsplash.com/photo-1493246507139-91e8fad9978e?auto=format&fit=crop&q=80&w=800',
+              'https://images.unsplash.com/photo-1504280390367-361c6d9f38f4?auto=format&fit=crop&q=80&w=800',
+              'https://images.unsplash.com/photo-1530789253388-582c481c54b0?auto=format&fit=crop&q=80&w=800',
+              'https://images.unsplash.com/photo-1512100356956-c1227c3317bb?auto=format&fit=crop&q=80&w=800',
+            ].map((img, i) => (
+              <motion.div 
+                key={i}
+                whileHover={{ scale: 1.02 }}
+                className={cn(
+                  "relative overflow-hidden rounded-2xl aspect-square",
+                  i === 1 || i === 6 ? "md:col-span-2 md:aspect-video" : ""
+                )}
+              >
+                <img 
+                  src={img} 
+                  alt={`Gallery ${i}`} 
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Footer */}
       <footer id="contact" className="bg-paper border-t border-ink/5 pt-24 pb-12">
         <div className="max-w-7xl mx-auto px-6">
@@ -658,6 +777,134 @@ function MainApp() {
           </div>
         </div>
       </footer>
+
+      {/* Admin Panel Modal */}
+      <AnimatePresence>
+        {showAdminPanel && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-5xl h-[85vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="bg-ink p-6 flex items-center justify-between text-white">
+                <div className="flex items-center gap-3">
+                  <Shield className="text-accent w-6 h-6" />
+                  <h4 className="font-serif text-2xl">Admin Dashboard</h4>
+                </div>
+                <button onClick={() => setShowAdminPanel(false)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8">
+                <div className="mb-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <h5 className="text-xl font-serif">Manage All Bookings</h5>
+                    <div className="text-xs uppercase tracking-widest text-ink/40 font-bold">
+                      Total Bookings: {allBookings.length}
+                    </div>
+                  </div>
+
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                    {[
+                      { label: 'All', count: allBookings.length, status: 'all', color: 'bg-ink/5 text-ink' },
+                      { label: 'Pending', count: allBookings.filter(b => b.status === 'pending').length, status: 'pending', color: 'bg-yellow-100 text-yellow-700' },
+                      { label: 'Approved', count: allBookings.filter(b => b.status === 'approved').length, status: 'approved', color: 'bg-green-100 text-green-700' },
+                      { label: 'Rejected', count: allBookings.filter(b => b.status === 'rejected').length, status: 'rejected', color: 'bg-red-100 text-red-700' }
+                    ].map(stat => (
+                      <button 
+                        key={stat.label}
+                        onClick={() => setAdminStatusFilter(stat.status as any)}
+                        className={cn(
+                          "p-4 rounded-2xl border transition-all text-left",
+                          adminStatusFilter === stat.status ? "border-accent ring-2 ring-accent/20" : "border-ink/5 hover:border-ink/20",
+                          stat.color
+                        )}
+                      >
+                        <div className="text-[10px] uppercase tracking-widest font-bold mb-1">{stat.label}</div>
+                        <div className="text-2xl font-serif">{stat.count}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {allBookings.filter(b => adminStatusFilter === 'all' || b.status === adminStatusFilter).length === 0 ? (
+                    <div className="text-center py-20 text-ink/30 italic">No {adminStatusFilter !== 'all' ? adminStatusFilter : ''} bookings found in the system.</div>
+                  ) : (
+                    allBookings
+                      .filter(b => adminStatusFilter === 'all' || b.status === adminStatusFilter)
+                      .map((booking) => (
+                      <div key={booking.id} className="bg-paper p-6 rounded-2xl border border-ink/5 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className={cn(
+                              "text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 rounded-full",
+                              booking.status === 'approved' ? "bg-green-100 text-green-700" :
+                              booking.status === 'rejected' ? "bg-red-100 text-red-700" :
+                              "bg-yellow-100 text-yellow-700"
+                            )}>
+                              {booking.status}
+                            </span>
+                            <span className="text-xs text-ink/40 font-mono">ID: {booking.id.slice(0, 8)}...</span>
+                          </div>
+                          <h6 className="text-lg font-serif mb-1">{booking.destinationName}</h6>
+                          <div className="flex flex-wrap gap-4 text-sm text-ink/60">
+                            <div className="flex items-center gap-1"><UserIcon className="w-3 h-3" /> {booking.userName || 'Anonymous'} ({booking.userEmail})</div>
+                            <div className="flex items-center gap-1"><Star className="w-3 h-3" /> ${booking.totalPrice}</div>
+                            <div className="flex items-center gap-1"><Clock className="w-3 h-3" /> {booking.createdAt?.toDate().toLocaleDateString()}</div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          {booking.status === 'pending' ? (
+                            <>
+                              <button 
+                                onClick={() => updateBookingStatus(booking.id, 'approved')}
+                                className="bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-green-700 transition-colors"
+                              >
+                                Approve
+                              </button>
+                              <button 
+                                onClick={() => updateBookingStatus(booking.id, 'rejected')}
+                                className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-red-700 transition-colors"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          ) : (
+                            <button 
+                              onClick={() => updateBookingStatus(booking.id, 'pending')}
+                              className="text-ink/40 hover:text-ink text-xs font-bold transition-colors"
+                            >
+                              Reset to Pending
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => deleteBooking(booking.id)}
+                            className="p-2 text-red-400 hover:text-red-600 transition-colors"
+                            title="Delete Booking"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Gemini Assistant Toggle */}
       <button 

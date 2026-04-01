@@ -72,13 +72,13 @@ service cloud.firestore {
              data.country is string && data.country.size() > 0 && data.country.size() < 100 &&
              data.price is number && data.price >= 0 &&
              isValidUrl(data.image) &&
-             data.category in ['Adventure', 'Relaxation', 'Culture', 'Luxury'];
+             data.category in ['Adventure', 'Relaxation', 'Culture', 'Luxury', 'Family', 'Transport'];
     }
 
     function isValidBooking(data) {
       return data.keys().hasAll(['userId', 'destinationId', 'status', 'createdAt']) &&
-             data.userId == request.auth.uid &&
-             data.status in ['pending', 'confirmed', 'cancelled'] &&
+             (data.userId == request.auth.uid || isAdmin()) &&
+             data.status in ['pending', 'confirmed', 'cancelled', 'approved', 'rejected'] &&
              data.createdAt is timestamp;
     }
 
